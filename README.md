@@ -561,14 +561,6 @@ FAM-STAR also does not provide formal privacy guarantees such as differential pr
 
 The reported evidence is system-level and based on one recorded seed. Multi-seed evaluation, component-level ablations, and validation on additional Android datasets and deployment environments remain future work.
 
-## Citation
-
-If you use this implementation, please cite the accompanying manuscript:
-
-> **FAM-STAR: Federated Android Malware Classification with Sparse Topology Adaptation and Role-Specific Aggregation**
-
-Publication metadata and a formal BibTeX entry should be added here once the final venue metadata is available.
-
 ## License
 
 See the repository `LICENSE` file for licensing terms.
