@@ -43,3 +43,6 @@ ENV/
 # Model checkpoints
 checkpoints/*
 !checkpoints/.gitkeep
+
+# Generated FedAvg experiment artifacts
+/experiments/fedavg/
