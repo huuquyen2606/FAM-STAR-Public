@@ -1,1 +1,1 @@
-"""Data preparation package for CICAndMal2020."""
+"""Data package for CICAndMal2020 and FAM-STAR."""
