@@ -129,10 +129,9 @@ The archive is organized into:
 
 ```text
 FAM-STAR-Full Source/
-|-- 01_Code/
-|-- 02_Dataset/
-|-- 03_Data_Preprocessing/
-`-- 04_Results/
+|-- src/
+|-- data/
+`-- results/
 ```
 
 For reproducing the reported numbers, use the prepared client partitions from the archive rather than generating a new random partition.
