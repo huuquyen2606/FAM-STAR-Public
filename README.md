@@ -114,6 +114,23 @@ Package `__init__.py` files and generated `__pycache__/` directories are omitted
 | [src/utils/metrics.py](src/utils/metrics.py) | FAM-STAR metric/communication exports, classification report, and figures. |
 | [src/utils/seed.py](src/utils/seed.py) | FAM-STAR seeding utilities. |
 | [src/utils/io.py](src/utils/io.py) | FAM-STAR round-state checkpoint serialization; no resume entry point is currently provided. |
+## Full Reproducibility Archive
+
+The complete research archive, including prepared data, preprocessing artifacts, trained checkpoints, metrics, and figures, is available here:
+
+**FAM-STAR Full Source:**  
+https://drive.google.com/drive/folders/1s52jWVlChoOBYSDoP3yDJZMludPYOnM0
+
+The archive is organized into:
+
+```text
+FAM-STAR-Full Source/
+|-- src/
+|-- data/
+`-- results/
+```
+
+For reproducing the reported numbers, use the prepared client partitions from the archive rather than generating a new random partition.
 
 ## Installation
 
