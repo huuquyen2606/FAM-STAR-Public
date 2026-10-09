@@ -2,71 +2,21 @@
 
 **Federated Android Malware Classification with Sparse Topology Adaptation and Role-Specific Aggregation**
 
-FAM-STAR is a federated learning framework for Android malware classification under **fragmented label support**, **non-IID client data**, and **communication constraints**. The method jointly adapts a sparse shared representation and aggregates client updates according to the role of each parameter: shared representation parameters use client-level class-diversity evidence, while classifier rows use class-specific support. Cross-client prototypes and compact sparse exchange complement the training protocol.
+FAM-STAR is a federated learning framework for Android malware classification under fragmented label support, non-IID client data, and communication constraints. It combines class-aware local learning, adaptive sparse model connectivity, role-specific aggregation, and compact exchange of model updates and class prototypes.
 
-This repository provides the reusable Python implementation of FAM-STAR used for the experiments with **10, 20, and 50 clients**. A single source tree is used for all federation sizes; the client count and prepared data directory are selected at run time.
+This repository contains the modular FAM-STAR implementation and eight comparison baselines for **10, 20, and 50 clients**. Clients are logical participants in a synchronous federated simulation, not separate Android devices.
 
-## Main Components
+## Method Overview
 
-FAM-STAR combines the following mechanisms:
+- **Class-aware supervision:** effective-number class balancing and restricted softmax preserve the global label space while down-scaling logits for locally absent classes.
+- **Masked FedProx:** local proximal regularization respects the current sparse mask.
+- **Prototype-guided learning:** global class prototypes support embedding alignment and an auxiliary classifier-head cross-entropy objective.
+- **Dynamic sparse topology:** prune/regrow proposals use classification-gradient evidence; the classification head remains dense.
+- **Role-specific aggregation:** shared representation parameters use client-level class-diversity evidence, while classifier rows use class-specific support.
+- **Prototype fusion:** local class prototypes are aggregated using support and embedding dispersion.
+- **Compact uplink:** sparse deltas and prototypes use INT8 quantization, bit-packed maps, and client-side error feedback.
 
-- **Class-aware local supervision (CB-RS):** effective-number class balancing over locally observed classes while preserving the global output space and down-scaling logits for locally absent classes.
-- **Masked FedProx regularization:** constrains local drift while respecting the current sparse topology.
-- **Prototype-guided local learning:** global class prototypes provide embedding alignment and an auxiliary classifier-head cross-entropy objective.
-- **Class-aware dynamic sparse topology adaptation:** active connections are pruned using classification-derived importance and inactive connections are regrown from gradient-EMA evidence under a fixed sparsity budget.
-- **Role-specific server aggregation:** shared representation parameters and classifier rows use different class-evidence-aware aggregation weights.
-- **Reliability-weighted prototype aggregation:** class prototypes are fused using local support and embedding dispersion.
-- **Compact communication:** sparse model deltas and prototypes are quantized to INT8; support maps and topology masks are bit-packed; error feedback retains local compression residuals.
-
-## Reported Experimental Setting
-
-The accompanying study evaluates FAM-STAR on a processed subset of **CCCS-CIC-AndMal-2020** with:
-
-- **53,439** Android application records.
-- **126** input features.
-- **14** labels.
-- Fixed **80/20** train/test split:
-  - 42,751 training records.
-  - 10,688 held-out test records.
-- Federation sizes: **10, 20, and 50 clients**.
-- **50 communication rounds**.
-- Full client participation in every round.
-- Base random seed: **42**.
-- Simulation on a **single Kaggle-hosted NVIDIA Tesla T4 GPU**; clients are logical participants rather than physical devices.
-
-For each federation size, all compared methods use the same client partition and the same held-out test set.
-
-## Model and Training Configuration
-
-The implementation uses the common classifier and FAM-STAR settings from the reported experiments.
-
-| Component | Setting |
-|---|---|
-| Local model | Bidirectional LSTM -> GRU -> fully connected classifier |
-| BiLSTM hidden size | 300 |
-| GRU hidden size | 100 |
-| Dense hidden size | 80 |
-| Dropout | 0.3 |
-| Optimizer | Adamax |
-| Learning rate | 0.002 |
-| Local batch size | 128 |
-| Local epochs / round | 5 |
-| Test batch size | 256 |
-| Communication rounds | 50 |
-| Seed | 42 |
-| FedProx coefficient `mu` | 0.01 |
-| Effective-number coefficient `beta_CB` | 0.90 |
-| Missing-class logit scale `alpha` | 0.10 |
-| Role-specific aggregation `gamma` | 0.50 |
-| Target sparsity | 50% |
-| Prune fraction `q` | 0.05 |
-| Gradient-EMA decay `delta` | 0.90 |
-| Prototype alignment coefficient | 0.05 |
-| Prototype-head CE coefficient | 0.05 |
-| Prototype epsilon | `1e-8` |
-| INT8 quantization epsilon | `1e-8` |
-
-The classification head remains dense. Sparsity is applied only to designated shared tensors.
+Each round activates the previously agreed mask, trains participating clients, aggregates their updates and prototypes, proposes the next mask, evaluates the global model, and saves results. A newly agreed mask becomes active in the **next** round. Only the CB-RS classification gradient supplies pruning/regrowth evidence.
 
 ## Repository Structure
 
@@ -75,535 +25,274 @@ The classification head remains dense. Sparsity is applied only to designated sh
 |-- README.md
 |-- LICENSE
 |-- requirements.txt
+|-- .gitignore
+|-- data/
+|   |-- raw/
+|   |   `-- CICAndMal2020.csv
+|   `-- processed/
+|       `-- CICAndMal2020/
+|           |-- 10clients/
+|           |-- 20clients/
+|           `-- 50clients/
+|-- checkpoints/
+|   `-- .gitkeep
+|-- experiments/
+|   |-- .gitkeep
+|   |-- fedavg/
+|   |-- fedprox/
+|   |-- jopeq/
+|   |-- wireless/
+|   |-- feddst/
+|   |-- zeroshot/
+|   |-- fedgpd/
+|   `-- fedgkd_vote/
 `-- src/
-    |-- __init__.py
     |-- main.py
     |-- train.py
     |-- evaluate.py
     |-- scripts/
-    |   |-- __init__.py
     |   `-- run_fam_star.py
     |-- data/
-    |   |-- __init__.py
+    |   |-- prepare_data.py
+    |   |-- preprocessing.py
+    |   |-- partition.py
     |   `-- dataset.py
     |-- models/
-    |   |-- __init__.py
     |   `-- hybrid_blstm_gru.py
     |-- fam_star/
-    |   |-- __init__.py
-    |   |-- aggregation.py
-    |   |-- compression.py
     |   |-- prototype.py
-    |   `-- topology.py
+    |   |-- topology.py
+    |   |-- aggregation.py
+    |   `-- compression.py
+    |-- baselines/
+    |   |-- common/
+    |   |   |-- data.py
+    |   |   |-- metrics.py
+    |   |   `-- results.py
+    |   |-- fedavg.py
+    |   |-- fedprox.py
+    |   |-- jopeq.py
+    |   |-- wireless.py
+    |   |-- feddst.py
+    |   |-- zeroshot.py
+    |   |-- fedgpd.py
+    |   `-- fedgkd_vote.py
     `-- utils/
-        |-- __init__.py
-        |-- io.py
         |-- metrics.py
-        `-- seed.py
+        |-- seed.py
+        `-- io.py
 ```
 
-### Source Responsibilities
+Package `__init__.py` files and generated `__pycache__/` directories are omitted. Data and experiment artifacts must be obtained or generated separately when absent from a checkout. Each baseline method directory contains `10clients/`, `20clients/`, and `50clients/` result slots; an empty slot is not a completed experiment.
 
-- `src/main.py` — end-to-end synchronous FAM-STAR training pipeline and `FrameworkConfig`.
-- `src/train.py` — local CB-RS objective, masked FedProx, prototype alignment, prototype-head CE, and topology evidence collection.
-- `src/evaluate.py` — shared-test-set evaluation and predictive metrics.
-- `src/data/dataset.py` — prepared client-partition and test-set loader.
-- `src/models/hybrid_blstm_gru.py` — the BLSTM-GRU classifier.
-- `src/fam_star/aggregation.py` — class-evidence-aware, role-specific model aggregation.
-- `src/fam_star/topology.py` — sparse-mask initialization, pruning/regrowth, and server topology consensus.
-- `src/fam_star/prototype.py` — local prototype extraction, quantization, dispersion, and server prototype fusion.
-- `src/fam_star/compression.py` — sparse INT8 delta exchange, error feedback, bit-packed maps, and communication accounting.
-- `src/utils/io.py` — per-round checkpoint serialization.
-- `src/utils/metrics.py` — metrics, communication tables, reports, and figures.
-- `src/utils/seed.py` — deterministic seeding utilities.
-- `src/scripts/run_fam_star.py` — command-line entry point.
+### File and Folder Responsibilities
 
-## Full Reproducibility Archive
-
-The complete research archive, including prepared data, preprocessing artifacts, trained checkpoints, metrics, and figures, is available here:
-
-**FAM-STAR Full Source:**  
-https://drive.google.com/drive/folders/1s52jWVlChoOBYSDoP3yDJZMludPYOnM0
-
-The archive is organized into:
-
-```text
-FAM-STAR-Full Source/
-|-- 01_Code/
-|-- 02_Dataset/
-|-- 03_Data_Preprocessing/
-`-- 04_Results/
-```
-
-For reproducing the reported numbers, use the prepared client partitions from the archive rather than generating a new random partition.
+| Path | Responsibility |
+|---|---|
+| `data/raw/` | Input CSV used by the preparation pipeline. |
+| `data/processed/` | Prepared client arrays, shared test arrays, metadata, and preprocessing artifacts. |
+| `checkpoints/` | Root placeholder; current runners save checkpoints inside their selected result directory, not here by default. |
+| `experiments/` | Locally organized baseline outputs; FAM-STAR can also write here through `--output-dir`. |
+| `requirements.txt` / `.gitignore` | Pinned dependencies / exclusions for caches, environments, checkpoints, and generated baseline outputs. |
+| [src/main.py](src/main.py) | `FrameworkConfig` and the end-to-end FAM-STAR training pipeline. |
+| [src/train.py](src/train.py) | Local CB-RS, masked FedProx, prototype objectives, and topology-evidence collection. |
+| [src/evaluate.py](src/evaluate.py) | Global-model evaluation on the shared test set. |
+| [src/scripts/run_fam_star.py](src/scripts/run_fam_star.py) | FAM-STAR command-line entry point. |
+| [src/data/prepare_data.py](src/data/prepare_data.py) | CSV-to-prepared-partition command-line entry point. |
+| [src/data/preprocessing.py](src/data/preprocessing.py) | Label encoding, train/test splitting, imputation, feature selection, and standardization. |
+| [src/data/partition.py](src/data/partition.py) | Fragmented-label non-IID partitioning and client-label distribution exports. |
+| [src/data/dataset.py](src/data/dataset.py) | Prepared-data serialization/loading, data loaders, and client class statistics. |
+| [src/models/hybrid_blstm_gru.py](src/models/hybrid_blstm_gru.py) | FAM-STAR's BLSTM-GRU classifier and embedding output. |
+| [src/fam_star/prototype.py](src/fam_star/prototype.py) | Class-prototype extraction, quantization, dispersion, and server fusion. |
+| [src/fam_star/topology.py](src/fam_star/topology.py) | Sparse model masks, pruning/regrowth, and server mask consensus; not a client-network graph. |
+| [src/fam_star/aggregation.py](src/fam_star/aggregation.py) | Separate aggregation weights for shared tensors and class-specific classifier rows. |
+| [src/fam_star/compression.py](src/fam_star/compression.py) | Sparse INT8 delta exchange, error feedback, bit-packed maps, and payload accounting. |
+| `src/baselines/*.py` | Independent method-specific helpers, editable settings, `train_federated`, and `main`. |
+| [src/baselines/common/data.py](src/baselines/common/data.py) | Baseline model, seeding, data/validation loading, and model-state/averaging helpers. |
+| [src/baselines/common/metrics.py](src/baselines/common/metrics.py) | Baseline predictive metrics, with optional loss and MCC. |
+| [src/baselines/common/results.py](src/baselines/common/results.py) | Baseline output paths, payload events, checkpoint saving, CSVs, reports, and figures. |
+| [src/utils/metrics.py](src/utils/metrics.py) | FAM-STAR metric/communication exports, classification report, and figures. |
+| [src/utils/seed.py](src/utils/seed.py) | FAM-STAR seeding utilities. |
+| [src/utils/io.py](src/utils/io.py) | FAM-STAR round-state checkpoint serialization; no resume entry point is currently provided. |
 
 ## Installation
 
-Clone the repository and create a Python environment:
+The recorded research environment used Python **3.12.13**, PyTorch **2.10.0+cu128**, and a Kaggle NVIDIA Tesla T4 on `cuda:0`. Although that runtime exposed two GPUs, training used one. Package versions are pinned in `requirements.txt`; the installed CUDA build depends on the PyTorch installation.
 
 ```bash
 git clone https://github.com/huuquyen2606/FAM-STAR-Public.git
 cd FAM-STAR-Public
-
 python -m venv .venv
 ```
 
-Linux/macOS:
+Activate with `source .venv/bin/activate` on Linux/macOS, or `.\.venv\Scripts\Activate.ps1` in Windows PowerShell. Then install the pinned dependencies with `python -m pip install -r requirements.txt`.
 
-```bash
-source .venv/bin/activate
-```
+The implementation uses PyTorch, NumPy, pandas, scikit-learn, matplotlib, seaborn, and SciPy. Wireless uses SciPy for its Lambert-W resource solver. Runners select `cuda:0` when available and otherwise use CPU; full CPU experiments can be substantially slower.
 
-Windows PowerShell:
+## Dataset Preparation
 
-```powershell
-.\.venv\Scripts\Activate.ps1
-```
+Dataset: [CCCS-CIC-AndMal-2020](https://www.unb.ca/cic/datasets/andmal2020.html). The study uses 53,439 records, 126 selected features, and 14 labels, with a stratified 80/20 split: 42,751 training records and 10,688 held-out test records.
 
-Install the required packages:
+For paper reproduction, use the fixed prepared partitions rather than creating another random split. The [full research archive](https://drive.google.com/drive/folders/1s52jWVlChoOBYSDoP3yDJZMludPYOnM0) contains `01_Code/`, `02_Dataset/`, `03_Data_Preprocessing/`, and `04_Results/`.
 
-```bash
-pip install -r requirements.txt
-```
+| Clients | Local prepared directory | Kaggle dataset |
+|---:|---|---|
+| 10 | `data/processed/CICAndMal2020/10clients/` | [10-client partition](https://www.kaggle.com/datasets/zhacutis1tg/cicandmal2020-10clients) |
+| 20 | `data/processed/CICAndMal2020/20clients/` | [20-client partition](https://www.kaggle.com/datasets/zhacutis1tg/cicandmal2020-20clients) |
+| 50 | `data/processed/CICAndMal2020/50clients/` | [50-client partition](https://www.kaggle.com/datasets/zhacutis1tg/cicandmal2020-50clients) |
 
-Current core dependencies are:
+Each prepared directory has this layout:
 
 ```text
-numpy
-pandas
-matplotlib
-seaborn
-scikit-learn
-torch
-```
-
-### Verified Reproduction Environment
-
-The refactored FAM-STAR implementation was validated on Kaggle and reproduced the reported predictive metrics and communication cost.
-
-| Component | Verified environment |
-|---|---|
-| Python | `3.12.13` |
-| PyTorch | `2.10.0+cu128` |
-| CUDA reported by PyTorch | `12.8` |
-| NumPy | `2.4.6` |
-| pandas | `2.3.3` |
-| matplotlib | `3.10.0` |
-| SciPy | `1.16.3` |
-| scikit-learn | `1.6.1` |
-| seaborn | `0.13.2` |
-| GPU runtime | Kaggle `GPU T4 x2` |
-| GPU used by the experiment | NVIDIA Tesla T4 (`cuda:0`) |
-
-The Kaggle runtime exposed two T4 GPUs, but the FAM-STAR training pipeline used only the primary device (`cuda:0`). Therefore, the reported experiment is a single-GPU simulation, consistent with the experimental description in the manuscript.
-
-## Hardware and Device Selection
-
-The runner accepts an explicit device through `--device`.
-
-When CUDA is available, the default is:
-
-```text
-cuda:0
-```
-
-Otherwise, the implementation falls back to:
-
-```text
-cpu
-```
-
-A CPU run is supported by the code path but can be substantially slower for the full 50-round experiment. The reported experiments used one NVIDIA Tesla T4 GPU.
-
-On Kaggle, GPU availability can be checked with:
-
-```python
-import torch
-
-print(torch.cuda.is_available())
-if torch.cuda.is_available():
-    print(torch.cuda.get_device_name(0))
-```
-
-## Prepared Dataset Format
-
-The training runner expects one prepared directory for each federation size.
-
-Example for 10 clients:
-
-```text
-/path/to/cicandmal2020-10clients/
+<N>clients/
 |-- metadata.json
+|-- preprocessors.pkl
 |-- X_test.npy
 |-- y_test.npy
+|-- client_label_distribution.csv
+|-- label_distribution_bubble_modern.png
 `-- clients/
     |-- client_0_X.npy
     |-- client_0_y.npy
-    |-- client_1_X.npy
-    |-- client_1_y.npy
-    |-- ...
-    |-- client_9_X.npy
-    `-- client_9_y.npy
+    `-- ... client_<N-1>_X.npy and client_<N-1>_y.npy
 ```
 
-The corresponding 20-client and 50-client directories use the same layout with 20 and 50 client pairs, respectively.
+Training loads `metadata.json`, test arrays, and client arrays. Metadata supplies `classes`, `num_classes`, `num_features`, and `num_clients`; loaders validate the requested client count. Preprocessor and distribution files document preparation and are not required by the training loaders.
 
-`metadata.json` must contain:
+Baseline data resolution uses an explicit `DATA_DIR` first, the fixed `/kaggle/input/datasets/zhacutis1tg/cicandmal2020-<N>clients` mount on Kaggle, or the local prepared directory above. Attach the matching Kaggle dataset, or set `DATA_DIR` to its actual mount path. FAM-STAR requires an explicit `--data-dir`.
 
-```json
-{
-  "classes": ["class_0", "class_1", "..."],
-  "num_classes": 14,
-  "num_features": 126,
-  "num_clients": 10
-}
-```
+### Optional: Generate Partitions from the CSV
 
-The class names and their encoded ordering are read directly from `metadata.json`. For the 20-client and 50-client settings, change only the appropriate prepared partition and `num_clients` value.
-
-The loader checks that `metadata.json` agrees with the requested `--num-clients` value.
-
-### Dataset Source
-
-The underlying dataset is **CCCS-CIC-AndMal-2020**, maintained by the Canadian Institute for Cybersecurity:
-
-https://www.unb.ca/cic/datasets/andmal2020.html
-
-Use and redistribution should follow the dataset provider's terms and the requirements of the research project or institution.
-
-## Running FAM-STAR
-
-Run commands from the repository root.
-
-### 10 clients
+Place the study CSV at `data/raw/CICAndMal2020.csv`. To generate a 10-client partition (use `20` or `50` for the other sizes), run:
 
 ```bash
-python -m src.scripts.run_fam_star \
-  --data-dir /path/to/cicandmal2020-10clients \
-  --output-dir results/FAM-STAR/10_clients \
-  --num-clients 10 \
-  --num-rounds 50 \
-  --num-epochs 5 \
-  --batch-size 128 \
-  --learning-rate 0.002 \
-  --device cuda:0
+python -m src.data.prepare_data --num-clients 10
 ```
 
-### 20 clients
+**This command overwrites artifacts in the selected output directory.** Do not rerun it over archived partitions when reproducing paper results; use `--output-dir` for a separate destination.
 
-```bash
-python -m src.scripts.run_fam_star \
-  --data-dir /path/to/cicandmal2020-20clients \
-  --output-dir results/FAM-STAR/20_clients \
-  --num-clients 20 \
-  --num-rounds 50 \
-  --num-epochs 5 \
-  --batch-size 128 \
-  --learning-rate 0.002 \
-  --device cuda:0
-```
-
-### 50 clients
-
-```bash
-python -m src.scripts.run_fam_star \
-  --data-dir /path/to/cicandmal2020-50clients \
-  --output-dir results/FAM-STAR/50_clients \
-  --num-clients 50 \
-  --num-rounds 50 \
-  --num-epochs 5 \
-  --batch-size 128 \
-  --learning-rate 0.002 \
-  --device cuda:0
-```
-
-The same Python source is used for all three federation sizes. Only the prepared data directory and `--num-clients` value change.
-
-### Kaggle example
-
-If the prepared data is attached to a Kaggle notebook, use its `/kaggle/input/...` path and write outputs to `/kaggle/working/...`:
-
-```bash
-python -m src.scripts.run_fam_star \
-  --data-dir /kaggle/input/<prepared-fam-star-data> \
-  --output-dir /kaggle/working/FAM_STAR_10clients_results \
-  --num-clients 10 \
-  --num-rounds 50 \
-  --device cuda:0
-```
+Preprocessing replaces infinities with missing values, removes identifier/label columns, performs the stratified split, then fits mean imputation, zero-variance filtering, and `StandardScaler` on training data only. Partitioning uses fragmented label support, not a Dirichlet sampler. The default minimum client size of 500 is a retry target, not a guarantee when the best available split is returned.
 
 ## Configuration
 
-The main configuration object is `FrameworkConfig` in `src/main.py`.
+### Shared Model and Training Defaults
 
-The command-line runner directly exposes:
+| Component | Setting |
+|---|---|
+| Base classifier | BiLSTM (300) -> GRU (100) -> dense (80) -> global-class output; dropout 0.3 |
+| Optimizer / learning rate | Adamax / 0.002 |
+| Rounds / local epochs | 50 / 5 |
+| Training / test batch size | 128 / 256 |
+| Seed / participation | 42 / all clients each round |
 
-- `--data-dir`
-- `--output-dir`
-- `--num-clients`
-- `--num-rounds`
-- `--num-epochs`
-- `--batch-size`
-- `--learning-rate`
-- `--device`
+Tabular samples are supplied as `(batch, 1, num_features)`, not multi-step sequences. ZeroShot structurally reduces the base model before federated training.
 
-FAM-STAR-specific hyperparameters such as sparsity, prune fraction, class-balancing coefficients, prototype coefficients, aggregation gamma, and quantization epsilon are defined in `FrameworkConfig` so that the experimental settings are explicit in one place.
+### FAM-STAR Settings
 
-## End-to-End Training Sequence
+Algorithm settings live in `FrameworkConfig` in `src/main.py`:
 
-At communication round `t`, the implementation follows this order:
+| Fields | Defaults |
+|---|---|
+| `fedprox_mu` | 0.01 |
+| `cb_beta`, `missing_class_scale` | 0.90, 0.10; present-class logits keep scale 1.0 |
+| `aggregation_gamma` | 0.50 |
+| `total_sparsity`, `prune_fraction` | 0.50, 0.05 |
+| `prototype_lambda` | 0.05 for both alignment and prototype-head CE |
+| `prototype_eps`, `int8_eps` | `1e-8`, `1e-8` |
 
-1. Activate the topology agreed at the end of the previous round.
-2. Broadcast the current global model, current sparse mask, and available global class prototypes.
-3. For every participating client:
-   - load the current global state;
-   - optimize the FAM-STAR local objective under the fixed current mask;
-   - collect classification-gradient evidence;
-   - construct a next-round sparse-topology proposal;
-   - extract local class prototypes, support counts, and dispersion values;
-   - quantize and serialize the local sparse update and prototype package;
-   - retain the compression residual locally for error feedback.
-4. Aggregate shared representation updates with diversity-adjusted client evidence.
-5. Aggregate classifier rows with corresponding class-specific support.
-6. Aggregate global class prototypes using support and dispersion.
-7. Compute the sample-weighted Top-K consensus mask for the next round.
-8. Evaluate the current-round global model on the shared held-out test set.
-9. Save the round checkpoint and logged communication/predictive statistics.
+Classification-gradient EMA decay is 0.90 in `src/train.py`. Sparsity applies to designated shared tensors, not the classification head. Prototype auxiliary terms are inactive in round 1 until global prototypes have been aggregated.
 
-The newly agreed topology is **pending state** and becomes active only at the start of the next communication round.
+### Baseline Settings
 
-## Local Learning Objective
+All eight baseline runners use the same code layout. Settings are constants near the top of each method file, **not command-line arguments**.
 
-FAM-STAR uses four local components:
+| Method | File | Evaluated setting |
+|---|---|---|
+| FedAvg | `fedavg.py` | Sample-count-weighted model averaging |
+| FedProx | `fedprox.py` | `FEDPROX_MU = 0.01` for every client count |
+| JoPEQ | `jopeq.py` | `JOPEQ_EPSILON = 3.0`, nominal `JOPEQ_B = 4.0` (`R = 4`) |
+| Wireless Quantized FL | `wireless.py` | `WIRELESS_EPSILON = 0.01` for every client count |
+| FedDST | `feddst.py` | `SPARSITY = 0.50`, `MASK_UPDATE_INTERVAL = 15` |
+| Zero-shot pruning | `zeroshot.py` | `PRUNING_RATE = 0.50`; uniform server averaging |
+| FedGKD-VOTE | `fedgkd_vote.py` | `FEDGKD_M = 5`, `FEDGKD_GAMMA = 0.5`, `TEMPERATURE = 2.0`, `FEDGKD_BETA = 1.0 / FEDGKD_M` |
+| FedGPD | `fedgpd.py` | `TEMPERATURE = 2.0`, `FEDGPD_LAMBDA = 0.05` |
 
-1. **CB-RS classification loss** for class imbalance and missing local classes.
-2. **Masked FedProx** regularization against the current global model.
-3. **Prototype alignment** between local embeddings and available global class prototypes.
-4. **Prototype-head cross-entropy** using detached global prototypes.
+FedProx, FedDST, and Wireless use the selected settings above rather than differing values in the original notebooks. Method-specific state and diagnostics remain separate from the three shared baseline modules.
 
-Only the **CB-RS classification gradient** supplies topology evidence. Prototype, head, and proximal terms affect parameter learning but are not used for pruning/regrowth scores.
+## Running Experiments
 
-In round 1, no global prototypes are available yet, so prototype-based auxiliary terms are inactive. They become available after the first server prototype aggregation.
+Run all commands from the repository root.
 
-## Sparse Topology Adaptation
+### FAM-STAR
 
-For each prunable shared tensor, FAM-STAR maintains a fixed active-connection budget.
+Unlike the baselines, the existing FAM-STAR entry point accepts CLI flags:
 
-- Active positions are ranked using the final local parameter magnitude multiplied by the final CB-RS gradient magnitude.
-- A fraction `q = 0.05` of active positions with the lowest score is proposed for pruning.
-- Inactive positions are ranked by the EMA of CB-RS gradient magnitude.
-- The same number of positions is proposed for regrowth from the pre-pruning inactive pool.
-- Newly pruned positions cannot be immediately regrown in the same proposal.
-- The server combines client proposals using sample-weighted Top-K mask consensus.
-- The classification head is kept dense.
-
-This preserves the target 50% sparsity budget while allowing connectivity to evolve across rounds.
-
-## Role-Specific Aggregation
-
-FAM-STAR does not use one aggregation coefficient for all model parameters.
-
-### Shared representation
-
-Shared parameters blend:
-
-- standard sample-count weighting; and
-- diversity-adjusted class-support evidence.
-
-The blend coefficient is `gamma = 0.50`.
-
-### Classifier rows
-
-Classifier row `c` blends:
-
-- sample-count weighting; and
-- support for class `c` across participating clients.
-
-The resulting coefficients are normalized across clients before the class-specific row and bias are updated.
-
-### Global class prototypes
-
-For each available class, dequantized client prototypes are aggregated with the heuristic weight:
-
-```text
-log(1 + support) / (dispersion + epsilon)
+```bash
+python -m src.scripts.run_fam_star --data-dir data/processed/CICAndMal2020/10clients --num-clients 10 --output-dir experiments/fam_star/10clients
+python -m src.scripts.run_fam_star --data-dir data/processed/CICAndMal2020/20clients --num-clients 20 --output-dir experiments/fam_star/20clients
+python -m src.scripts.run_fam_star --data-dir data/processed/CICAndMal2020/50clients --num-clients 50 --output-dir experiments/fam_star/50clients
 ```
 
-If no client contributes a class in a round, the previous global prototype for that class is retained.
+These commands use the default training settings. Available overrides are `--num-rounds`, `--num-epochs`, `--batch-size`, `--learning-rate`, and `--device`; run `python -m src.scripts.run_fam_star --help` for usage. Without `--output-dir`, the current default is `fam_star_results/`, not `experiments/`.
 
-## Communication Accounting
+On Kaggle, provide the attached dataset path through `--data-dir` and select an output under `/kaggle/working/`, for example `/kaggle/working/fam_star/10clients`.
 
-FAM-STAR records **application-level serialized payload** rather than estimating communication only from active-parameter counts.
+### Baselines
 
-The uplink accounts for components such as:
+Set `NUM_CLIENTS = 10`, `20`, or `50` in the selected file, then run its module:
 
-- INT8 sparse update values;
-- support bitmaps;
-- quantization scales;
-- next-round topology proposal bitmaps;
-- quantized class prototypes;
-- support/dispersion metadata;
-- serialization metadata and overhead represented by the implementation.
-
-The downlink accounts for the sparse FP32 global state, bit-packed current mask, and available global prototypes.
-
-Communication is logged separately for uplink and downlink and can be summarized per round and per participating client.
-
-## Output Structure
-
-A run produces:
-
-```text
-results/FAM-STAR/10_clients/
-|-- checkpoints/
-|   |-- round_01_famstar.pt
-|   |-- round_02_famstar.pt
-|   |-- ...
-|   `-- round_50_famstar.pt
-|-- metrics/
-|   |-- metrics_per_round.csv
-|   |-- payload_events.csv
-|   |-- communication_rounds.csv
-|   |-- per_class_metrics.csv
-|   `-- classification_report.txt
-`-- figures/
-    |-- metrics_per_round.png
-    `-- confusion_matrix.png
+```bash
+python -m src.baselines.fedavg
+python -m src.baselines.fedprox
+python -m src.baselines.jopeq
+python -m src.baselines.wireless
+python -m src.baselines.feddst
+python -m src.baselines.zeroshot
+python -m src.baselines.fedgpd
+python -m src.baselines.fedgkd_vote
 ```
 
-The same output layout is used for 20 and 50 clients.
+Edit `NUM_ROUNDS`, `NUM_EPOCHS`, and other constants in the same file when needed. `DATA_DIR = None`, `OUTPUT_DIR = None`, and `DEVICE = None` select automatic data resolution, the default result location, and CUDA/CPU selection. Explicit overrides also belong in that method file; do not append baseline flags to the command.
 
-### Per-round checkpoints
+## Results and Checkpoints
 
-Each checkpoint stores the round state required for research archival, including:
+Baseline outputs go directly to `experiments/<method>/<N>clients/` locally or `/kaggle/working/<method>/<N>clients/` on Kaggle. For example, FedAvg's three result folders are `experiments/fedavg/10clients/`, `20clients/`, and `50clients/`. There is no repeated method/client nesting, copied `src/` tree, or automatic results ZIP.
 
-- global model parameters;
-- current sparse masks;
-- pending next-round masks, when applicable;
-- client error-feedback residuals;
-- global class prototypes;
-- round metrics;
-- Python, NumPy, PyTorch CPU, and available CUDA RNG states.
+FAM-STAR writes to the selected `--output-dir`, with separate `metrics/`, `figures/`, and `checkpoints/` subdirectories. Paths in this table are relative to the corresponding run directory:
 
-## Predictive Metrics
+| Output | Baselines | FAM-STAR | Contents |
+|---|---|---|---|
+| Round metrics | `metrics_per_round.csv` | `metrics/metrics_per_round.csv` | Predictive metrics, training loss, execution time, and peak CUDA memory |
+| Payload events | `payload_events.csv` | `metrics/payload_events.csv` | Client/direction payload accounting |
+| Communication totals | `communication_rounds.csv` | `metrics/communication_rounds.csv` | Round upload/download totals and cumulative communication |
+| Per-class metrics | `per_class_metrics.csv` | `metrics/per_class_metrics.csv` | Class support, precision, recall, and F1 |
+| Classification report | `classification_report.txt` for FedDST/ZeroShot | `metrics/classification_report.txt` | Text classification report |
+| Convergence figure | `metrics_per_round.png` | `figures/metrics_per_round.png` | Accuracy and F1 trajectories |
+| Confusion matrix | `confusion_matrix.png` | `figures/confusion_matrix.png` | Final-model confusion matrix |
+| Checkpoints | `checkpoints/` | `checkpoints/` | Method-specific model/state files |
 
-The global model is evaluated after every communication round on the shared held-out test set.
+Baseline exporters retain additional method-specific metric and payload columns. Wireless also writes `wireless_metrics_per_round.csv`, `wireless_cost_per_client.csv`, and `wireless_resources.csv`.
 
-Logged metrics include:
+- FedAvg retains only its latest round checkpoint. Wireless does the same for 50 clients but retains all rounds for 10/20 clients. Other baselines retain round checkpoints.
+- FedDST saves auxiliary masks and layer-sparsity state; FedGPD saves auxiliary global prototypes and keeps its source zero-prototype regularization in round 1.
+- FedGKD-VOTE uses supplied validation arrays or a deterministic client holdout, keeps frozen historical teachers, and saves `best_model_fedgkd_vote.pt` by validation Macro-F1. Final figures use the last-round model, not that best checkpoint.
+- FAM-STAR saves `round_<NN>_famstar.pt` with model parameters, current/pending masks, client residuals, global prototypes, round metrics, and RNG states. Saved state does not imply that automatic resume is implemented.
 
-- Accuracy.
-- Balanced accuracy.
-- Macro / micro / weighted precision.
-- Macro / micro / weighted recall.
-- Macro / micro / weighted F1.
-- Worst-class F1.
-- Training loss.
-- Local and server execution time.
-- Peak allocated GPU memory when CUDA is used.
+Runners print to the console; they do not automatically create `.log` files. If retaining a console/notebook log, use `<method>-<N>clients.log` without a project-name prefix. Transfer result files separately from any Kaggle workspace source copy.
 
-The study uses **Macro-F1** as the primary predictive metric because it weights all 14 classes equally.
+## Reproducibility and Scope
 
-## Reported Round-50 Results
+Use the archived prepared partitions, seed 42, and the stated configuration to reproduce the study. Compare saved CSVs and figures with `04_Results/` in the research archive; empty result folders do not substitute for completed runs.
 
-The following FAM-STAR values are reported at round 50:
-
-| Clients | Accuracy | Macro-P | Macro-R | Macro-F1 | Weighted-P | Weighted-R | Weighted-F1 |
-|---:|---:|---:|---:|---:|---:|---:|---:|
-| 10 | 0.7303 | 0.6579 | 0.6806 | 0.6548 | 0.7592 | 0.7303 | 0.7359 |
-| 20 | 0.7483 | 0.6436 | 0.6591 | 0.6380 | 0.7488 | 0.7483 | 0.7460 |
-| 50 | 0.7362 | 0.6285 | 0.6125 | 0.6138 | 0.7273 | 0.7362 | 0.7294 |
-
-Among the evaluated methods, FAM-STAR achieves the highest observed Macro-F1 and Weighted-F1 for all three federation sizes. Relative to the strongest baseline for Macro-F1, the reported improvements are **5.33**, **7.18**, and **2.36 percentage points** for 10, 20, and 50 clients, respectively.
-
-## Reported Communication Results
-
-Averaged over communication rounds 1-50 and equally across the 10-, 20-, and 50-client settings, the reported mean **per-client application-level payload per round** for FAM-STAR is:
-
-| Direction | Mean payload (KB) |
-|---|---:|
-| Uplink | 598.806 |
-| Downlink | 2685.374 |
-| Total | 3284.180 |
-
-Among the evaluated methods, FAM-STAR has the **lowest uplink payload** and the **second-lowest total payload**. The reported total-payload reductions are:
-
-- **67.16%** versus FedAvg.
-- **38.72%** versus FedDST.
-- **43.21%** versus JoPEQ.
-- **49.99%** versus Wireless Quantized FL.
-
-Zero-shot pruning has a lower total payload in the reported comparison, while FAM-STAR achieves substantially higher Macro-F1 across all three federation sizes.
-
-## Reproducibility Notes
-
-- The reported study uses **one recorded seed (`42`)**.
-- Client partitions are fixed for each federation size.
-- All clients participate in every round.
-- The shared test set is identical across methods for a given experimental study.
-- The experiment is a logical federated simulation on one GPU, not a deployment across physical Android devices.
-- For exact reproduction of the paper tables, use the archived prepared partitions and the reported configuration above.
-- Small numerical differences may still occur across PyTorch/CUDA/cuDNN versions or different hardware environments.
-
-## Scope and Limitations
-
-The current evaluation assumes that the server and participating clients follow the federated protocol honestly.
-
-The current scope does **not** claim robustness against:
-
-- Byzantine clients;
-- model or data poisoning;
-- backdoor attacks;
-- Sybil attacks;
-- adversarial malware evasion;
-- communication-channel attacks.
-
-FAM-STAR also does not provide formal privacy guarantees such as differential privacy or secure aggregation, and it does not claim protection against information leakage from exchanged model updates or auxiliary class-level information.
-
-The reported evidence is system-level and based on one recorded seed. Multi-seed evaluation, component-level ablations, and validation on additional Android datasets and deployment environments remain future work.
+- Predictive evaluation uses the shared held-out test set. Macro-F1 is the primary metric; exports also include accuracy, balanced accuracy, macro/micro/weighted precision, recall and F1, and worst-class F1.
+- Communication is application-level accounting, not measured network traffic or transport overhead. FAM-STAR and dense baseline packages include serialization bytes; JoPEQ uses actual byte encoding/decoding.
+- JoPEQ's nominal 4-bit setting has 17 symbols and therefore uses 5 packed bits per symbol. Wireless reports an analytical uplink bit budget and a serialized dense downlink, not an implemented packed uplink codec.
+- FedGKD-VOTE preserves notebook accounting differences: only the 10-client variant records additional historical-teacher downlinks. Account for this when comparing communication totals.
+- ZeroShot's 50% pruning refers to structural hidden-dimension reduction, not exactly 50% fewer total parameters or a 50% sparse mask.
+- A shortened run checks execution only; one round cannot exercise FedDST's round-15 rewiring or historical-teacher distillation. Restore experimental settings before full runs.
+- The reported study uses one recorded seed and a single-GPU logical simulation. Different partitions, libraries, CUDA/cuDNN versions, or hardware can change results.
+- FAM-STAR assumes honest participants. It does not implement poisoning/backdoor defenses, Byzantine robustness, secure aggregation, or a formal differential-privacy guarantee.
 
 ## License
 
-See the repository `LICENSE` file for licensing terms.
-
-## FedAvg baseline: 10, 20, or 50 clients
-
-Install the runtime dependencies: `torch`, `numpy`, `pandas`, `scikit-learn`, `matplotlib`, and `seaborn`.
-
-The local data-preparation command reads `data/raw/CICAndMal2020.csv` and writes the selected client partition under `data/processed/CICAndMal2020/<N>clients/`:
-
-```powershell
-python -m src.data.prepare_data --num-clients 10
-python -m src.data.prepare_data --num-clients 20
-python -m src.data.prepare_data --num-clients 50
-```
-
-Attach the matching public Kaggle dataset as an Input:
-
-- 10 clients: [cicandmal2020-10clients](https://www.kaggle.com/datasets/zhacutis1tg/cicandmal2020-10clients)
-- 20 clients: [cicandmal2020-20clients](https://www.kaggle.com/datasets/zhacutis1tg/cicandmal2020-20clients)
-- 50 clients: [cicandmal2020-50clients](https://www.kaggle.com/datasets/zhacutis1tg/cicandmal2020-50clients)
-
-In Kaggle, attach the selected dataset as an Input. The code maps `NUM_CLIENTS` to one fixed mount path and validates `metadata.json`. If the mount differs, edit the mapping in `src/baselines/common/data.py`; the FedAvg runner has no path flags.
-
-Each dataset has `metadata.json`, `preprocessors.pkl`, `X_test.npy`, `y_test.npy`, and:
-
-```text
-clients/
-  client_0_X.npy
-  client_0_y.npy
-  ...
-  client_<N-1>_X.npy
-  client_<N-1>_y.npy
-```
-
-Set `NUM_CLIENTS` in `src/baselines/fedavg.py` to 10, 20, or 50. `NUM_ROUNDS`, `NUM_EPOCHS`, `BATCH_SIZE`, `TEST_BATCH_SIZE`, `LEARNING_RATE`, and `SEED` are constants in the same file. The `--num-clients` switches above belong only to the separate data-preparation command.
-
-Run FedAvg from the repository root:
-
-```powershell
-python -m src.baselines.fedavg
-```
-
-Output paths are selected automatically: `/kaggle/working/fedavg/<N>clients/` on Kaggle, or `experiments/fedavg/<N>clients/` locally. Change `resolve_output_dir()` in `src/baselines/fedavg.py` to change this behavior.
-
-For a short smoke run (not a benchmark), temporarily set `NUM_ROUNDS = 1`, `NUM_EPOCHS = 1`, and `BATCH_SIZE = 4096` in `src/baselines/fedavg.py`, then run the same command. Restore the values before a full experiment.
+Source code is licensed under [Apache License 2.0](LICENSE). Dataset access, use, and redistribution remain subject to the dataset provider's terms and applicable institutional requirements.

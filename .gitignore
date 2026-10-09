@@ -44,5 +44,12 @@ ENV/
 checkpoints/*
 !checkpoints/.gitkeep
 
-# Generated FedAvg experiment artifacts
+# Generated baseline experiment artifacts
 /experiments/fedavg/
+/experiments/fedprox/
+/experiments/jopeq/
+/experiments/wireless/
+/experiments/feddst/
+/experiments/zeroshot/
+/experiments/fedgpd/
+/experiments/fedgkd_vote/

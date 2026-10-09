@@ -1,4 +1,4 @@
-"""FedAvg baseline converted from the SOICT2026 10/20/50-client notebooks."""
+"""FedProx baseline converted from the SOICT2026 10/20/50-client notebooks."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import os
 import time
 from pathlib import Path
 
-# PyTorch requires this before CUDA initializes for deterministic RNNs.
+# Set this before importing PyTorch for deterministic CUDA RNNs.
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
 import numpy as np
@@ -32,8 +32,8 @@ from src.baselines.common.results import (
 
 # Settings are edited here; the module runner accepts no command-line flags.
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-METHOD_NAME = "FedAvg"
-METHOD_SLUG = "fedavg"
+METHOD_NAME = "FedProx"
+METHOD_SLUG = "fedprox"
 NUM_CLIENTS = 10
 NUM_ROUNDS = 50
 NUM_EPOCHS = 5
@@ -49,8 +49,19 @@ DATA_DIR = None
 OUTPUT_DIR = None
 DEVICE = None
 
+# Evaluated setting approved for K=10,20,50 (notebook source used 0.1).
+FEDPROX_MU = 0.01
 
-def local_train(model, loader, epochs: int, learning_rate: float, device):
+
+def local_train(
+    model,
+    loader,
+    epochs: int,
+    learning_rate: float,
+    device,
+    global_params,
+    proximal_mu: float,
+):
     model.train()
     optimizer = optim.Adamax(model.parameters(), lr=learning_rate)
     criterion = nn.CrossEntropyLoss()
@@ -62,14 +73,18 @@ def local_train(model, loader, epochs: int, learning_rate: float, device):
             X_batch, y_batch = X_batch.to(device), y_batch.to(device)
             optimizer.zero_grad()
             logits = model(X_batch)
-            loss = criterion(logits, y_batch)
+
+            proximal_term = 0.0
+            for name, param in model.named_parameters():
+                global_param = global_params[name].to(device).detach()
+                proximal_term += torch.sum((param - global_param) ** 2)
+            loss = criterion(logits, y_batch) + (proximal_mu / 2.0) * proximal_term
             loss.backward()
             optimizer.step()
             running_loss += float(loss.detach().item())
             num_batches += 1
 
-    mean_loss = running_loss / max(num_batches, 1)
-    return get_params(model), mean_loss
+    return get_params(model), running_loss / max(num_batches, 1)
 
 
 def train_federated(
@@ -100,14 +115,13 @@ def train_federated(
     payload_events = []
 
     print(
-        f"Starting Federated Learning: {num_rounds} rounds | "
-        f"{num_clients} clients | batch={batch_size}"
+        f"Starting {METHOD_NAME}: {num_rounds} rounds | "
+        f"{num_clients} clients | batch={batch_size} | mu={FEDPROX_MU}"
     )
 
     for round_id in range(1, num_rounds + 1):
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(device)
-
         global_params = get_params(global_model)
         download_payload = summarize_payload(global_params)
         local_t0 = time.perf_counter()
@@ -130,18 +144,18 @@ def train_federated(
                     round_id, client_id, "downlink", "model", download_payload
                 )
             )
-
             params, client_train_loss = local_train(
                 model=local_model,
                 loader=client_trainloaders[client_id],
                 epochs=num_epochs,
                 learning_rate=learning_rate,
                 device=device,
+                global_params=global_params,
+                proximal_mu=FEDPROX_MU,
             )
-            upload_payload = summarize_payload(params)
             payload_events.append(
                 build_payload_event(
-                    round_id, client_id, "uplink", "update", upload_payload
+                    round_id, client_id, "uplink", "update", summarize_payload(params)
                 )
             )
             client_params_list.append(params)
@@ -150,17 +164,14 @@ def train_federated(
 
         local_time_sec = time.perf_counter() - local_t0
         server_t0 = time.perf_counter()
-        averaged_params = fed_avg(client_params_list, client_sizes)
-        set_params(global_model, averaged_params)
+        set_params(global_model, fed_avg(client_params_list, client_sizes))
         metrics = evaluate(global_model, global_testloader, device, num_classes)
         server_time_sec = time.perf_counter() - server_t0
-        train_loss = float(np.mean(client_train_losses))
         peak_vram_mb = (
             torch.cuda.max_memory_allocated(device) / (1024**2)
             if device.type == "cuda"
             else 0.0
         )
-
         metrics_log.append(
             {
                 "round": round_id,
@@ -176,23 +187,18 @@ def train_federated(
                 "f1_micro": metrics["f1_micro"],
                 "worst_class_f1": metrics["worst_class_f1"],
                 "balanced_accuracy": metrics["balanced_accuracy"],
-                "train_loss": train_loss,
+                "train_loss": float(np.mean(client_train_losses)),
                 "local_time_sec": round(local_time_sec, 2),
                 "server_time_sec": round(server_time_sec, 2),
                 "peak_vram_mb": round(float(peak_vram_mb), 2),
             }
         )
 
-        checkpoint_path = checkpoint_dir / f"round_{round_id:02d}_fedavg.pt"
-        save_model_checkpoint(global_model.state_dict(), checkpoint_path)
-        if round_id > 1:
-            previous_checkpoint = checkpoint_dir / f"round_{round_id - 1:02d}_fedavg.pt"
-            if previous_checkpoint.exists():
-                try:
-                    previous_checkpoint.unlink()
-                except Exception:
-                    pass
-
+        # Unlike FedAvg, the source FedProx notebooks retain every round.
+        save_model_checkpoint(
+            global_model.state_dict(),
+            checkpoint_dir / f"round_{round_id:02d}_fedprox.pt",
+        )
         print(
             f"Round {round_id:02d}/{num_rounds} | "
             f"Acc={metrics['accuracy']:.4f} | "

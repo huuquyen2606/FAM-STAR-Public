@@ -8,19 +8,35 @@ from sklearn.metrics import (
     accuracy_score,
     balanced_accuracy_score,
     f1_score,
+    matthews_corrcoef,
     precision_score,
     recall_score,
 )
 
 
-def evaluate(model, loader, device, num_classes: int):
+def evaluate(
+    model,
+    loader,
+    device,
+    num_classes: int,
+    include_loss: bool = False,
+    include_mcc: bool = False,
+):
+    """Shared predictive metrics, retaining method-specific loss/MCC on request."""
     model.eval()
     all_preds = []
     all_labels = []
+    total_loss = 0.0
+    total_seen = 0
     with torch.no_grad():
         for X_batch, y_batch in loader:
             X_batch = X_batch.to(device)
-            preds = model(X_batch).argmax(dim=1).cpu().numpy()
+            logits = model(X_batch)
+            preds = logits.argmax(dim=1).cpu().numpy()
+            if include_loss:
+                loss = torch.nn.functional.cross_entropy(logits, y_batch.to(device))
+                total_loss += float(loss.item()) * y_batch.size(0)
+                total_seen += y_batch.size(0)
             all_preds.extend(preds)
             all_labels.extend(y_batch.numpy())
 
@@ -35,7 +51,7 @@ def evaluate(model, loader, device, num_classes: int):
         zero_division=0,
     )
 
-    return {
+    metrics = {
         "accuracy": accuracy_score(all_labels, all_preds),
         "balanced_accuracy": balanced_accuracy_score(all_labels, all_preds),
         "precision_macro": precision_score(
@@ -69,3 +85,8 @@ def evaluate(model, loader, device, num_classes: int):
         "preds": all_preds,
         "labels": all_labels,
     }
+    if include_loss:
+        metrics["loss"] = total_loss / max(total_seen, 1)
+    if include_mcc:
+        metrics["mcc"] = matthews_corrcoef(all_labels, all_preds)
+    return metrics

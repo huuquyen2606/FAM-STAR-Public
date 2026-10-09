@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-import zipfile
 from pathlib import Path
 
 import matplotlib
@@ -14,7 +13,11 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import torch
-from sklearn.metrics import confusion_matrix, precision_recall_fscore_support
+from sklearn.metrics import (
+    classification_report,
+    confusion_matrix,
+    precision_recall_fscore_support,
+)
 
 from .metrics import evaluate
 
@@ -24,11 +27,12 @@ def resolve_output_dir(
     num_clients: int,
     project_root: str | Path,
 ) -> Path:
-    """Choose a writable Kaggle output path or a repo-local experiment path."""
+    """Separate each method's results into its client-count folders."""
+    client_folder = f"{num_clients}clients"
     kaggle_working = Path("/kaggle/working")
     if kaggle_working.is_dir():
-        return kaggle_working / method_name / f"{num_clients}clients"
-    return Path(project_root) / "experiments" / method_name / f"{num_clients}clients"
+        return kaggle_working / method_name / client_folder
+    return Path(project_root) / "experiments" / method_name / client_folder
 
 
 METRICS_COLUMNS = [
@@ -82,7 +86,8 @@ COMMUNICATION_COLUMNS = [
 ]
 
 
-def summarize_payload(state_dict) -> dict[str, int | float]:
+def summarize_payload(state_dict, return_wire: bool = False):
+    """Measure the dense wire package; JoPEQ also consumes its actual bytes."""
     cpu_state = {
         name: tensor.detach().cpu().contiguous()
         for name, tensor in state_dict.items()
@@ -100,7 +105,7 @@ def summarize_payload(state_dict) -> dict[str, int | float]:
     metadata_bytes = max(serialized_bytes - values_bytes, 0)
     sparsity = 1.0 - (nnz / max(total_params, 1))
 
-    return {
+    summary = {
         "raw_bytes": values_bytes,
         "serialized_bytes": serialized_bytes,
         "values_bytes": values_bytes,
@@ -113,6 +118,40 @@ def summarize_payload(state_dict) -> dict[str, int | float]:
         "total_params": total_params,
         "sparsity": float(sparsity),
     }
+    if return_wire:
+        return serialized_buffer.getvalue(), summary
+    return summary
+
+
+def build_payload_event(
+    round_id,
+    client_id,
+    direction,
+    payload_type,
+    summary,
+    error_norm: float = 0.0,
+    **extra,
+):
+    return {
+        "round": round_id,
+        "client_id": client_id,
+        "direction": direction,
+        "payload_type": payload_type,
+        **summary,
+        "error_norm": float(error_norm),
+        **extra,
+    }
+
+
+def save_model_checkpoint(params, path: str | Path) -> None:
+    """Save notebook model weights; retention and auxiliary state are method-owned."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {name: tensor.detach().cpu() for name, tensor in params.items()},
+        path,
+    )
+    print(f"--> Checkpoint saved to {path}")
 
 
 def save_results(
@@ -126,11 +165,17 @@ def save_results(
     global_testloader,
     device,
     method_name: str,
+    include_classification_report: bool = False,
+    extra_tables: dict | None = None,
 ) -> dict:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    results_df = pd.DataFrame(metrics_log).reindex(columns=METRICS_COLUMNS)
+    results_df = pd.DataFrame(metrics_log)
+    extra_metrics_columns = [
+        column for column in results_df.columns if column not in METRICS_COLUMNS
+    ]
+    results_df = results_df.reindex(columns=METRICS_COLUMNS + extra_metrics_columns)
     results_df.to_csv(output_dir / "metrics_per_round.csv", index=False)
 
     payload_events_df = pd.DataFrame(payload_events)
@@ -140,6 +185,7 @@ def save_results(
     payload_events_df = payload_events_df.reindex(
         columns=PAYLOAD_COLUMNS + extra_payload_columns
     )
+    payload_events_df.to_csv(output_dir / "payload_events.csv", index=False)
 
     uplink_df = payload_events_df[payload_events_df["direction"] == "uplink"].copy()
     downlink_df = payload_events_df[payload_events_df["direction"] == "downlink"].copy()
@@ -172,12 +218,12 @@ def save_results(
     communication_rounds_df["participants"] = communication_rounds_df[
         "participants"
     ].astype(int)
-    communication_rounds_df["upload_bytes"] = communication_rounds_df[
-        "upload_bytes"
-    ].round().astype("int64")
-    communication_rounds_df["download_bytes"] = communication_rounds_df[
-        "download_bytes"
-    ].round().astype("int64")
+    communication_rounds_df["upload_bytes"] = (
+        communication_rounds_df["upload_bytes"].round().astype("int64")
+    )
+    communication_rounds_df["download_bytes"] = (
+        communication_rounds_df["download_bytes"].round().astype("int64")
+    )
     communication_rounds_df["total_bytes"] = (
         communication_rounds_df["upload_bytes"]
         + communication_rounds_df["download_bytes"]
@@ -271,32 +317,25 @@ def save_results(
     fig.savefig(output_dir / "confusion_matrix.png")
     plt.close(fig)
 
+    if include_classification_report:
+        report = classification_report(
+            y_true,
+            y_pred,
+            labels=list(range(num_classes)),
+            target_names=classes,
+            digits=4,
+            zero_division=0,
+        )
+        (output_dir / "classification_report.txt").write_text(report, encoding="utf-8")
+        print(report)
+
+    for filename, rows in (extra_tables or {}).items():
+        table = rows if isinstance(rows, pd.DataFrame) else pd.DataFrame(rows)
+        table_path = output_dir / filename
+        table_path.parent.mkdir(parents=True, exist_ok=True)
+        table.to_csv(table_path, index=False)
+
     print("\nFinal round metrics:")
     print(results_df.tail(1).to_string(index=False))
     print(f"Saved results under: {output_dir}")
     return final_metrics
-
-
-def archive_results(output_dir: str | Path, archive_name: str) -> Path:
-    output_dir = Path(output_dir)
-    archive_path = output_dir / archive_name
-    files_to_zip = sorted(
-        (
-            path
-            for path in output_dir.rglob("*")
-            if path.is_file()
-            and path != archive_path
-            and path.suffix.lower() != ".zip"
-        ),
-        key=lambda path: str(path),
-    )
-    if not files_to_zip:
-        raise FileNotFoundError(f"No generated outputs found in {output_dir}.")
-
-    with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
-        for file_path in files_to_zip:
-            archive.write(file_path, arcname=file_path.relative_to(output_dir))
-
-    print(f"Created results ZIP: {archive_path}")
-    print(f"Archived files: {len(files_to_zip)}")
-    return archive_path
