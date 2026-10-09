@@ -220,7 +220,7 @@ def run_training_pipeline(
             )
             pending_global_masks = None
 
-        if torch.cuda.is_available():
+        if config.device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(
                 config.device
             )
@@ -575,7 +575,7 @@ def run_training_pipeline(
             / total_samples
         )
 
-        if torch.cuda.is_available():
+        if config.device.type == "cuda":
             peak_vram_mb = (
                 torch.cuda.max_memory_allocated(
                     config.device
